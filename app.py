@@ -11,13 +11,15 @@ import logging
 
 from enum import Enum
 import paho.mqtt.client as mqtt
-from flask import Flask, escape
+from flask import Flask, escape, request
 
 API = jsonapi_requests.Api.config({
     'API_ROOT': 'http://resource/',
     'VALIDATE_SSL': False,
     'TIMEOUT': 1,
 })
+
+CLIENT = mqtt.Client("mqtt-service-" + os.uname()[1])
 
 APP = Flask(__name__)
 
@@ -62,6 +64,29 @@ class Message:
             mqtt_message.retain
         )
 
+    @staticmethod
+    def from_json(data):
+        #TODO: this should probably be a JSON:API model
+        if data is None:
+            return None
+
+        if "topic" not in data:
+            return None
+
+        message = Message(
+            MessageType.PUBLISH,
+            data["topic"]
+        )
+
+        if "body" in data:
+            message.body = data["body"]
+
+        if "retain" in data:
+            message.retain = data["retain"]
+
+        return message
+
+
 @APP.route("/")
 def root():
     """
@@ -69,13 +94,32 @@ def root():
     """
     return "Hello world!"
 
+@APP.route("/publish", methods=["POST"])
+def publish():
+    data = request.get_json()
+    message = Message.from_json(data)
+    if message is None:
+        return "Invalid message", 400
+    publish_message(message)
+    return "OK", 200
+
 def log_message(message: Message):
     try:
         endpoint = API.endpoint('mqtt-message')
         endpoint.post(object=message.to_jsonapi())
     except Exception as e:
-        logging.error(e)
+        logging.exception(e)
 
+def publish_message(message: Message):
+    if message.message_type != MessageType.PUBLISH:
+        logging.error("Only PUBLISH messages can be published")
+        return
+
+    CLIENT.publish(
+        message.topic,
+        message.body,
+        retain=message.retain
+    )
 
 def on_message(client, userdata, mqtt_message):
     message = Message.from_mqtt(mqtt_message)
@@ -102,11 +146,10 @@ def main():
         exit("Please specify the brokers IP in config/config.ini")
 
     # Connect to the broker
-    client = mqtt.Client("mqtt-service-" + os.uname()[1])
-    client.connect(config["mqtt"]["broker-ip"])
-    client.on_message = on_message
-    client.on_connect = on_connect
-    client.loop_start()
+    CLIENT.connect(config["mqtt"]["broker-ip"])
+    CLIENT.on_message = on_message
+    CLIENT.on_connect = on_connect
+    CLIENT.loop_start()
 
     # Start the flask app
     APP.run(host="0.0.0.0", port=80)
