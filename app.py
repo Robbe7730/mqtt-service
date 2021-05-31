@@ -45,7 +45,7 @@ class Message:
 
     def to_jsonapi(self):
         return jsonapi_requests.JsonApiObject(
-            type='mqtt-message',
+            type='mqtt-messages',
             attributes={
                 "message-type": self.message_type.name,
                 "topic": self.topic,
@@ -65,47 +65,62 @@ class Message:
         )
 
     @staticmethod
-    def from_json(data):
-        #TODO: this should probably be a JSON:API model
-        if data is None:
-            return None
+    def from_json(json_data):
+        #TODO: this should probably be handled by a JSON:API implementation
+        if json_data is None or "data" not in json_data:
+            return None, "Invalid JSON data or missing 'data' field."
 
-        if "topic" not in data:
-            return None
+        data = json_data["data"]
+
+        if data.get("type", None) != "mqtt-messages":
+            return None, "mqtt-service can only handle type 'mqtt-messages'."
+
+        attributes = data.get("attributes", None)
+
+        if attributes is None:
+            return None, "Missing 'attributes' field."
+
+        if attributes.get("message-type", "PUBLISH") != "PUBLISH":
+            return None, "Can only PUBLISH new messages."
+
+        topic = attributes.get("topic", None)
+
+        if topic is None:
+            return None, "Missing 'topic'"
 
         message = Message(
             MessageType.PUBLISH,
-            data["topic"]
+            topic
         )
 
-        if "body" in data:
-            message.body = data["body"]
+        if "body" in attributes:
+            message.body = attributes["body"]
 
-        if "retain" in data:
-            message.retain = data["retain"]
+        if "retain" in attributes:
+            message.retain = attributes["retain"]
 
-        return message
+        # 'created-at' is ignored and only written by this service
+
+        return message, "OK"
 
 
-@APP.route("/")
+@APP.route("/", methods=["GET", "POST"])
 def root():
-    """
-    root: The root-route, only used for debugging.
-    """
-    return "Hello world!"
+    if request.method == "GET":
+        return "Hello world!"
+    if request.method == "POST":
+        data = request.get_json()
+        message, text = Message.from_json(data)
 
-@APP.route("/publish", methods=["POST"])
-def publish():
-    data = request.get_json()
-    message = Message.from_json(data)
-    if message is None:
-        return "Invalid message", 400
-    publish_message(message)
-    return "OK", 200
+        if message is None:
+            return text, 400
+
+        publish_message(message)
+        return text, 200
 
 def log_message(message: Message):
     try:
-        endpoint = API.endpoint('mqtt-message')
+        endpoint = API.endpoint('mqtt-messages')
         endpoint.post(object=message.to_jsonapi())
     except Exception as e:
         logging.exception(e)
