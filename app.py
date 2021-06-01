@@ -11,7 +11,7 @@ import logging
 
 from enum import Enum
 import paho.mqtt.client as mqtt
-from flask import Flask, escape, request
+from flask import Flask, escape, request, jsonify
 
 API = jsonapi_requests.Api.config({
     'API_ROOT': 'http://resource/',
@@ -113,10 +113,17 @@ def root():
         message, text = Message.from_json(data)
 
         if message is None:
-            return text, 400
+            return jsonify({
+                "errors": [text]
+            }), 400
 
         publish_message(message)
-        return text, 200
+
+        return jsonify({
+            "data": {
+                "type": "mqtt-messages"
+            }
+        }), 202
 
 def log_message(message: Message):
     try:
